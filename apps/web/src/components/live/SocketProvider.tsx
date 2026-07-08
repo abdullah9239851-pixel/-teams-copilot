@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
-import type { ServerToClientEvents, ClientToServerEvents, BotStatus, TranscriptSegment, Suggestion } from '@teams-copilot/shared';
+import type { ServerToClientEvents, ClientToServerEvents, BotStatus, TranscriptSegment, Suggestion, CopilotMessage } from '@teams-copilot/shared';
 
 interface SocketContextType {
   socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
@@ -10,6 +10,7 @@ interface SocketContextType {
   botStatus: BotStatus | null;
   transcript: TranscriptSegment[];
   suggestions: Suggestion[];
+  messages: CopilotMessage[];
   joinMeeting: (meetingId: string) => void;
   leaveMeeting: (meetingId: string) => void;
   sendMessage: (content: string) => void;
@@ -23,6 +24,7 @@ export function SocketProvider({ children, meetingId }: { children: React.ReactN
   const [botStatus, setBotStatus] = useState<BotStatus | null>(null);
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [messages, setMessages] = useState<CopilotMessage[]>([]);
 
   useEffect(() => {
     const s = io(process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:4000') as Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -42,6 +44,18 @@ export function SocketProvider({ children, meetingId }: { children: React.ReactN
       setBotStatus(status);
     });
 
+    s.on('copilot_message', (msg) => {
+      setMessages((prev) => {
+        const idx = prev.findIndex(m => m.id === msg.id);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = msg;
+          return updated;
+        }
+        return [...prev, msg];
+      });
+    });
+
     setSocket(s);
     return () => { s.disconnect(); };
   }, []);
@@ -59,7 +73,7 @@ export function SocketProvider({ children, meetingId }: { children: React.ReactN
   };
 
   return (
-    <SocketContext.Provider value={{ socket, isConnected, botStatus, transcript, suggestions, joinMeeting, leaveMeeting, sendMessage }}>
+    <SocketContext.Provider value={{ socket, isConnected, botStatus, transcript, suggestions, messages, joinMeeting, leaveMeeting, sendMessage }}>
       {children}
     </SocketContext.Provider>
   );

@@ -1,16 +1,30 @@
 'use client';
 
+import { useRef, useEffect } from 'react';
 import { useSocket, SocketProvider } from './SocketProvider';
 
-function CopilotContent({ meetingId, meetingTitle }: { meetingId: string; meetingTitle: string }) {
-  const { transcript, suggestions, botStatus, sendMessage } = useSocket();
+const typeIcons: Record<string, string> = {
+  question: '?',
+  missed_topic: '!',
+  risk: '⚠',
+  commitment: '→',
+};
 
-  const getStatusColor = (s: string | null) => {
+function CopilotContent({ meetingId, meetingTitle }: { meetingId: string; meetingTitle: string }) {
+  const { transcript, suggestions, messages, botStatus, sendMessage } = useSocket();
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => { transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [transcript]);
+
+  const statusColor = (s: string | null) => {
     switch (s) {
       case 'joining': return 'text-warning';
+      case 'in_lobby': return 'text-warning';
       case 'live': return 'text-accent';
       case 'transcribing': return 'text-success';
-      case 'ai_listening': return 'text-accent';
+      case 'left': return 'text-text-muted';
       case 'error': return 'text-danger';
       default: return 'text-text-muted';
     }
@@ -18,52 +32,79 @@ function CopilotContent({ meetingId, meetingTitle }: { meetingId: string; meetin
 
   return (
     <div className="flex h-full">
-      {/* Left: Transcript */}
+      {/* ─── LEFT: Live Transcript ─────────────── */}
       <div className="w-2/5 border-r border-border flex flex-col">
-        <div className="p-3 border-b border-border flex items-center justify-between">
-          <h2 className="text-sm font-medium text-text-primary">Live Transcript</h2>
-          <span className={`text-xs ${getStatusColor(botStatus)}`}>
-            {botStatus || 'disconnected'}
-          </span>
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-text-primary">Live Transcript</h2>
+          <span className={`text-xs ${statusColor(botStatus)}`}>{botStatus || 'disconnected'}</span>
         </div>
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {transcript.length === 0 && (
-            <p className="text-sm text-text-muted text-center mt-8">Waiting for transcript...</p>
+            <p className="text-sm text-text-muted text-center mt-12">Waiting for bot to join and transcribe...</p>
           )}
           {transcript.map((seg, i) => (
-            <div key={seg.id || i} className="text-sm">
-              <span className="font-medium text-accent">{seg.speaker}</span>
+            <div key={seg.id || i} className="text-sm leading-relaxed">
+              <span className="font-semibold text-accent text-xs">{seg.speaker}</span>
               <p className="text-text-primary mt-0.5">{seg.text}</p>
             </div>
           ))}
+          <div ref={transcriptEndRef} />
         </div>
       </div>
 
-      {/* Center: Suggestions */}
+      {/* ─── CENTER: AI Suggestions ────────────── */}
       <div className="w-[35%] border-r border-border flex flex-col">
-        <div className="p-3 border-b border-border">
-          <h2 className="text-sm font-medium text-text-primary">AI Suggestions</h2>
+        <div className="px-4 py-3 border-b border-border">
+          <h2 className="text-sm font-semibold text-text-primary">AI Suggestions</h2>
         </div>
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {suggestions.length === 0 && (
-            <p className="text-sm text-text-muted text-center mt-8">AI suggestions will appear here...</p>
+            <p className="text-sm text-text-muted text-center mt-12">
+              AI will suggest questions, risks, and topics you might have missed...
+            </p>
           )}
           {suggestions.map((s, i) => (
-            <div key={s.id || i} className="p-3 rounded-lg bg-bg-elevated border border-border">
-              <p className="text-xs text-text-muted mb-1 uppercase">{s.type}</p>
+            <div
+              key={s.id || i}
+              className="p-3 rounded-lg bg-bg-elevated border border-border hover:border-accent/30 transition-colors"
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs">{typeIcons[s.type] || '•'}</span>
+                <span className="text-[10px] uppercase tracking-wider text-text-muted font-medium">
+                  {s.type.replace('_', ' ')}
+                </span>
+              </div>
               <p className="text-sm text-text-primary">{s.content}</p>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Right: Chat */}
+      {/* ─── RIGHT: Chat ───────────────────────── */}
       <div className="w-[25%] flex flex-col">
-        <div className="p-3 border-b border-border">
-          <h2 className="text-sm font-medium text-text-primary">Chat with AI</h2>
+        <div className="px-4 py-3 border-b border-border">
+          <h2 className="text-sm font-semibold text-text-primary">Ask AI</h2>
         </div>
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          <p className="text-xs text-text-muted text-center mt-8">Ask the AI anything about the meeting...</p>
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {messages.length === 0 && (
+            <p className="text-xs text-text-muted text-center mt-12">
+              Ask anything about the meeting — questions, summaries, drafts...
+            </p>
+          )}
+          {messages.map((msg) => (
+            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className={`max-w-[85%] px-3 py-2 rounded-lg text-sm ${
+                  msg.role === 'user'
+                    ? 'bg-accent text-white'
+                    : 'bg-bg-elevated border border-border text-text-primary'
+                }`}
+              >
+                {msg.content}
+              </div>
+            </div>
+          ))}
+          <div ref={chatEndRef} />
         </div>
         <div className="p-3 border-t border-border">
           <input
@@ -87,8 +128,7 @@ export function CopilotScreen({ meetingId, meetingTitle }: { meetingId: string; 
   return (
     <SocketProvider meetingId={meetingId}>
       <div className="flex flex-col h-screen bg-bg-primary">
-        {/* Top bar */}
-        <div className="h-12 flex items-center justify-between px-4 border-b border-border bg-bg-secondary">
+        <div className="h-12 flex items-center justify-between px-5 border-b border-border bg-bg-secondary">
           <div className="flex items-center gap-3">
             <h1 className="text-sm font-medium text-text-primary">{meetingTitle}</h1>
           </div>
@@ -97,7 +137,6 @@ export function CopilotScreen({ meetingId, meetingTitle }: { meetingId: string; 
             <span className="text-xs text-text-muted">AI Listening</span>
           </div>
         </div>
-        {/* Main */}
         <CopilotContent meetingId={meetingId} meetingTitle={meetingTitle} />
       </div>
     </SocketProvider>
