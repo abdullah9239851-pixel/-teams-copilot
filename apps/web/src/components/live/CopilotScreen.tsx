@@ -132,7 +132,13 @@ export function CopilotScreen({ meetingId, meetingTitle }: { meetingId: string; 
           <div className="flex items-center gap-3">
             <h1 className="text-sm font-medium text-text-primary">{meetingTitle}</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <a
+              href={`/live/${meetingId}/post-meeting`}
+              className="text-xs px-3 py-1.5 rounded-md bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+            >
+              Generate Package
+            </a>
             <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
             <span className="text-xs text-text-muted">AI Listening</span>
           </div>

@@ -1,3 +1,5 @@
+import dotenv from 'dotenv';
+dotenv.config();
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -37,7 +39,7 @@ app.get('/api/health', (_req, res) => {
 
 // Bot join
 app.post('/api/meetings/join', async (req, res) => {
-  const { meetingUrl, meetingId } = req.body;
+  const { meetingUrl, meetingId, goals, checklist } = req.body;
   if (!meetingUrl || !meetingId) {
     return res.status(400).json({ error: 'meetingUrl and meetingId required' });
   }
@@ -46,8 +48,8 @@ app.post('/api/meetings/join', async (req, res) => {
   const state: MeetingState = {
     transcriptBuffer: [],
     recentSuggestions: [],
-    goals: req.body.goals || '',
-    checklist: req.body.checklist || [],
+    goals: goals || '',
+    checklist: checklist || [],
     lastSuggestionTime: 0,
   };
   meetings.set(meetingId, state);
@@ -143,6 +145,35 @@ app.post('/api/meetings/leave', async (req, res) => {
 app.get('/api/meetings/:meetingId/transcript', (req, res) => {
   const state = meetings.get(req.params.meetingId);
   res.json({ segments: state?.transcriptBuffer || [] });
+});
+
+// Post-meeting: generate package
+app.post('/api/meetings/:meetingId/post-meeting', async (req, res) => {
+  const state = meetings.get(req.params.meetingId);
+  if (!state || state.transcriptBuffer.length === 0) {
+    return res.status(400).json({ error: 'No transcript data for this meeting' });
+  }
+
+  const fullTranscript = state.transcriptBuffer.map(t => `${t.speaker}: ${t.text}`).join('\n');
+  const { generatePostMeeting } = await import('./services/llm');
+
+  try {
+    const result = await generatePostMeeting(fullTranscript, state.goals);
+    const parsed = JSON.parse(result || '{}');
+    res.json(parsed);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List all recent meetings (from in-memory state)
+app.get('/api/meetings', (_req, res) => {
+  const list = Array.from(meetings.entries()).map(([id, state]) => ({
+    id,
+    segments: state.transcriptBuffer.length,
+    startedAt: state.transcriptBuffer[0]?.timestamp || Date.now(),
+  }));
+  res.json(list);
 });
 
 // Socket.io

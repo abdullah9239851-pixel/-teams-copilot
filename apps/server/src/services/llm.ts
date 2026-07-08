@@ -1,10 +1,14 @@
 import OpenAI from 'openai';
 import type { Suggestion, SuggestionType } from '@teams-copilot/shared';
 
-const openai = new OpenAI({
-  baseURL: process.env.LLM_BASE_URL || 'https://api.groq.com/openai/v1',
-  apiKey: process.env.LLM_API_KEY!,
-});
+function getOpenAI() {
+  const apiKey = process.env.LLM_API_KEY;
+  if (!apiKey) throw new Error('LLM_API_KEY must be set in .env');
+  return new OpenAI({
+    baseURL: process.env.LLM_BASE_URL || 'https://api.groq.com/openai/v1',
+    apiKey,
+  });
+}
 
 interface SuggestionInput {
   transcriptWindow: string;
@@ -15,7 +19,7 @@ interface SuggestionInput {
 }
 
 export async function generateSuggestions(input: SuggestionInput): Promise<Suggestion[]> {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: process.env.LLM_MODEL || 'llama-3.3-70b-versatile',
     messages: [
       {
@@ -67,7 +71,7 @@ export async function chatWithAI(
   kbContext: string,
   onToken: (token: string) => void
 ): Promise<string> {
-  const stream = await openai.chat.completions.create({
+  const stream = await getOpenAI().chat.completions.create({
     model: process.env.LLM_MODEL || 'llama-3.3-70b-versatile',
     messages: [
       {
