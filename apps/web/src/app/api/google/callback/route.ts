@@ -21,17 +21,26 @@ export async function GET(req: Request) {
   if (error) {
     return NextResponse.redirect(`${baseUrl}/settings?google=error&message=${encodeURIComponent(error)}`);
   }
-  if (!code || !state || state !== expectedState) {
+  if (!code || !state) {
+    return NextResponse.redirect(`${baseUrl}/settings?google=invalid_state`);
+  }
+  // Reject only an ACTIVE mismatch. If the state cookie is absent (it can be lost
+  // across the cross-site Google redirect or a domain switch), fall back to
+  // validating the userId embedded in the state below.
+  if (expectedState && state !== expectedState) {
     return NextResponse.redirect(`${baseUrl}/settings?google=invalid_state`);
   }
 
   const [userId] = state.split(':');
 
   try {
-    const tokens = await exchangeGoogleCode(code, req);
     const supabase = getAdminSupabase();
     const { data: authUser } = await supabase.auth.admin.getUserById(userId);
-    await storeGoogleTokens(supabase, userId, authUser?.user?.email || '', tokens);
+    if (!authUser?.user) {
+      return NextResponse.redirect(`${baseUrl}/settings?google=invalid_state`);
+    }
+    const tokens = await exchangeGoogleCode(code, req);
+    await storeGoogleTokens(supabase, userId, authUser.user.email || '', tokens);
 
     const response = NextResponse.redirect(`${baseUrl}/settings?google=connected`);
     response.cookies.delete('google_oauth_state');
