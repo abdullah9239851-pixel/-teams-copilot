@@ -22,10 +22,34 @@ export function DashboardPage() {
   const [events, setEvents] = useState<any[]>([]);
   const [recorded, setRecorded] = useState<any[]>([]);
   const [preparingId, setPreparingId] = useState('');
+  const [botUrl, setBotUrl] = useState('');
+  const [botJoining, setBotJoining] = useState(false);
   const router = useRouter();
   const supabase = createClient();
+  const backendUrl = process.env.NEXT_PUBLIC_SERVER_URL;
 
   const calendarConnected = msConnected || googleConnected;
+
+  // Direct bot join from a pasted Teams link (no calendar needed) — for testing.
+  const joinWithLink = async () => {
+    const link = botUrl.trim();
+    if (!link) return;
+    setBotJoining(true);
+    const meetingId = `meeting_${Date.now()}`;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (backendUrl) {
+        await fetch(`${backendUrl}/api/meetings/join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ meetingUrl: link, meetingId, title: 'Test Meeting', userId: session?.user?.id }),
+        });
+      }
+      router.push(`/live/${meetingId}?title=${encodeURIComponent('Test Meeting')}`);
+    } catch {
+      setBotJoining(false);
+    }
+  };
 
   useEffect(() => {
     loadCalendar();
@@ -174,6 +198,36 @@ export function DashboardPage() {
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="mb-8">
+        <h2 className="text-lg font-medium text-text-primary mb-4">Join a Teams meeting with the bot</h2>
+        <div className="p-6 rounded-xl bg-bg-secondary border border-border">
+          <p className="text-sm text-text-muted mb-4">
+            Paste any Teams meeting link to send the copilot bot in — no calendar needed.
+            {!backendUrl && (
+              <span className="block mt-1 text-warning">
+                ⚠️ Bot server not configured. This only works locally: run <code className="text-text-primary">npm run dev</code> and open <code className="text-text-primary">http://localhost:3000</code>.
+              </span>
+            )}
+          </p>
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={botUrl}
+              onChange={(e) => setBotUrl(e.target.value)}
+              placeholder="https://teams.microsoft.com/l/meetup-join/..."
+              className="flex-1 px-4 py-2.5 rounded-lg bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent text-sm"
+            />
+            <button
+              onClick={joinWithLink}
+              disabled={botJoining || !botUrl.trim()}
+              className="px-5 py-2.5 rounded-lg bg-accent text-white font-medium hover:bg-accent-hover transition-colors text-sm disabled:opacity-50 whitespace-nowrap"
+            >
+              {botJoining ? 'Joining…' : 'Join with Copilot'}
+            </button>
+          </div>
         </div>
       </div>
 
