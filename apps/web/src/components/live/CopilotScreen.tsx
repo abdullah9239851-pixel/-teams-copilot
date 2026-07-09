@@ -117,7 +117,12 @@ function PracticeCopilotScreen({ meetingId, meetingTitle }: { meetingId: string;
   return (
     <div className="flex flex-col h-screen bg-bg-primary">
       <div className="h-12 flex items-center justify-between px-5 border-b border-border bg-bg-secondary">
-        <h1 className="text-sm font-medium text-text-primary">{title}</h1>
+        <div className="flex items-center gap-3">
+          <a href="/" className="text-xs px-2.5 py-1.5 rounded-md bg-bg-elevated border border-border text-text-secondary hover:text-text-primary transition-colors">
+            ← Back
+          </a>
+          <h1 className="text-sm font-medium text-text-primary">{title}</h1>
+        </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setPlaying((value) => !value)} className="text-xs px-3 py-1.5 rounded-md bg-accent text-white">
             {playing ? 'Pause' : 'Play'}
@@ -371,6 +376,9 @@ export function CopilotScreen({ meetingId, meetingTitle }: { meetingId: string; 
       <div className="flex flex-col h-screen bg-bg-primary">
         <div className="h-12 flex items-center justify-between px-5 border-b border-border bg-bg-secondary">
           <div className="flex items-center gap-3">
+            <a href="/" className="text-xs px-2.5 py-1.5 rounded-md bg-bg-elevated border border-border text-text-secondary hover:text-text-primary transition-colors">
+              ← Back
+            </a>
             <h1 className="text-sm font-medium text-text-primary">{meetingTitle}</h1>
           </div>
           <div className="flex items-center gap-3">
