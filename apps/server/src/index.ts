@@ -10,7 +10,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import { PlaywrightTeamsBot } from './services/bot';
-import { generateSuggestions, chatWithAI, evaluateChecklist } from './services/llm';
+import { generateSuggestions, chatWithAI, evaluateChecklist, generatePostMeeting } from './services/llm';
 import { retrieveKbContext } from './services/kb';
 import {
   upsertMeeting,
@@ -20,6 +20,11 @@ import {
   saveCopilotMessage,
   updateSuggestionFeedback,
   saveMeetingPrep,
+  saveMeetingOutputs,
+  getFullTranscript,
+  hasMeetingOutputs,
+  getMeetingRow,
+  getMeetingPrep,
 } from './services/persistence';
 import type { TranscriptEvent, BotStatus } from './services/bot/types';
 import type { Suggestion, SuggestionType, CopilotMessage, ChecklistItem } from '@teams-copilot/shared';
@@ -44,6 +49,7 @@ interface MeetingState {
   checklist: ChecklistItem[];
   suggestionInterval?: ReturnType<typeof setInterval>;
   lastSuggestionTime: number;
+  finalizing: boolean;
 }
 
 const meetings = new Map<string, MeetingState>();
@@ -53,36 +59,43 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Bot join
-app.post('/api/meetings/join', async (req, res) => {
-  const { meetingUrl, meetingId, title, goals, checklist, userId } = req.body;
-  if (!meetingUrl || !meetingId) {
-    return res.status(400).json({ error: 'meetingUrl and meetingId required' });
-  }
+// Shared bot-start logic for join + rejoin.
+interface StartBotOptions {
+  meetingUrl: string;
+  meetingId: string;
+  title?: string;
+  goals?: string;
+  checklist?: ChecklistItem[];
+  userId?: string | null;
+  persistMeeting?: boolean;
+}
 
-  const checklistItems: ChecklistItem[] = Array.isArray(checklist)
-    ? checklist.map((c: any) => (typeof c === 'string' ? { text: c, answered: false } : c))
-    : [];
+async function startBot(opts: StartBotOptions) {
+  const { meetingId, meetingUrl } = opts;
 
   // Init meeting state
   const state: MeetingState = {
     transcriptBuffer: [],
     recentSuggestions: [],
-    goals: goals || '',
-    checklist: checklistItems,
+    goals: opts.goals || '',
+    checklist: opts.checklist || [],
     lastSuggestionTime: 0,
+    finalizing: false,
   };
   meetings.set(meetingId, state);
 
-  // Persist meeting (best-effort)
-  await upsertMeeting({
-    id: meetingId,
-    title: title || 'Client Meeting',
-    mode: 'live',
-    join_link: meetingUrl,
-    user_id: userId || null,
-    status: 'live',
-  });
+  // Persist meeting (best-effort). Skipped on rejoin so we don't overwrite
+  // fields (client, agenda) already set when the meeting was prepared.
+  if (opts.persistMeeting !== false) {
+    await upsertMeeting({
+      id: meetingId,
+      title: opts.title || 'Client Meeting',
+      mode: 'live',
+      join_link: meetingUrl,
+      user_id: opts.userId || null,
+      status: 'live',
+    });
+  }
 
   // Start suggestion + checklist loop (every 25s)
   state.suggestionInterval = setInterval(() => runSuggestionLoop(meetingId), 25000);
@@ -90,6 +103,8 @@ app.post('/api/meetings/join', async (req, res) => {
   try {
     const session = await bot.joinMeeting(meetingUrl, meetingId, 'Meeting Assistant', {
       onTranscript: (event: TranscriptEvent) => {
+        if (meetings.get(meetingId) !== state) return; // stale session after a rejoin
+
         state.transcriptBuffer.push(event);
         // Keep last 5 min of transcript in memory
         const cutoff = Date.now() - 300_000;
@@ -107,23 +122,80 @@ app.post('/api/meetings/join', async (req, res) => {
         });
       },
       onStatus: (status: BotStatus) => {
+        if (meetings.get(meetingId) !== state) return; // stale session after a rejoin
+
         io.to(meetingId).emit('bot_status', status);
         if (status === 'left' || status === 'error') {
-          clearInterval(state.suggestionInterval);
-          void setMeetingStatus(meetingId, status === 'error' ? 'failed' : 'completed', {
-            end_time: new Date().toISOString(),
-          });
+          void finalizeMeeting(meetingId, status === 'error' ? 'failed' : 'completed');
         }
       },
     });
 
     state.sessionId = session.sessionId;
     void setMeetingStatus(meetingId, 'live', { bot_session_id: session.sessionId });
-    res.json({ success: true, session });
-  } catch (err: any) {
-    meetings.delete(meetingId);
+    return session;
+  } catch (err) {
+    if (meetings.get(meetingId) === state) meetings.delete(meetingId);
     clearInterval(state.suggestionInterval);
     void setMeetingStatus(meetingId, 'failed');
+    throw err;
+  }
+}
+
+// Bot join
+app.post('/api/meetings/join', async (req, res) => {
+  const { meetingUrl, meetingId, title, goals, checklist, userId } = req.body;
+  if (!meetingUrl || !meetingId) {
+    return res.status(400).json({ error: 'meetingUrl and meetingId required' });
+  }
+
+  const checklistItems: ChecklistItem[] = Array.isArray(checklist)
+    ? checklist.map((c: any) => (typeof c === 'string' ? { text: c, answered: false } : c))
+    : [];
+
+  try {
+    const session = await startBot({ meetingUrl, meetingId, title, goals, checklist: checklistItems, userId });
+    res.json({ success: true, session });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bot rejoin — recovery after a bot failure or drop, using the stored join link.
+app.post('/api/meetings/rejoin', async (req, res) => {
+  const { meetingId } = req.body;
+  if (!meetingId) return res.status(400).json({ error: 'meetingId required' });
+
+  // Drop any stale session without finalizing (we're recovering, not ending).
+  const existing = meetings.get(meetingId);
+  if (existing) {
+    clearInterval(existing.suggestionInterval);
+    existing.finalizing = true;
+    meetings.delete(meetingId);
+    if (existing.sessionId) await bot.leaveMeeting(existing.sessionId).catch(() => {});
+  }
+
+  const row = await getMeetingRow(meetingId);
+  if (!row?.join_link) {
+    return res.status(404).json({ error: 'No stored join link for this meeting' });
+  }
+  const prep = await getMeetingPrep(meetingId);
+  const checklistItems: ChecklistItem[] = Array.isArray(prep?.checklist)
+    ? (prep!.checklist as any[]).map((c: any) => (typeof c === 'string' ? { text: c, answered: false } : c))
+    : [];
+
+  try {
+    const session = await startBot({
+      meetingUrl: row.join_link,
+      meetingId,
+      title: row.title,
+      goals: prep?.user_goals || '',
+      checklist: checklistItems,
+      userId: row.user_id,
+      persistMeeting: false,
+    });
+    res.json({ success: true, session });
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
@@ -199,16 +271,49 @@ async function runSuggestionLoop(meetingId: string) {
   }
 }
 
+// Meeting end: mark final status, then auto-generate the post-meeting package
+// (requirement: full package ready within ~2 minutes of meeting end).
+async function finalizeMeeting(meetingId: string, finalStatus: 'completed' | 'failed') {
+  const state = meetings.get(meetingId);
+  if (state) {
+    if (state.finalizing) return;
+    state.finalizing = true;
+    clearInterval(state.suggestionInterval);
+  }
+
+  await setMeetingStatus(meetingId, finalStatus, { end_time: new Date().toISOString() });
+
+  try {
+    if (await hasMeetingOutputs(meetingId)) return; // already generated (e.g. manually)
+
+    let segments: Array<{ speaker: string; text: string }> = await getFullTranscript(meetingId);
+    if (segments.length === 0 && state) segments = state.transcriptBuffer; // DB-down fallback
+    if (segments.length === 0) return; // nothing was transcribed
+
+    const transcript = segments.map((s) => `${s.speaker}: ${s.text}`).join('\n');
+    const pkg = await generatePostMeeting(transcript, state?.goals || '');
+    if (!pkg) return;
+
+    await saveMeetingOutputs(meetingId, {
+      summary: pkg.summary,
+      action_items: pkg.actionItems,
+      requirement_doc: pkg.requirementDoc,
+      email_draft: pkg.emailDraft,
+    });
+    io.to(meetingId).emit('post_meeting_ready', meetingId);
+    console.log(`[post-meeting] Package auto-generated for ${meetingId}`);
+  } catch (err) {
+    console.error(`[post-meeting] Auto-generation failed for ${meetingId}:`, err);
+  } finally {
+    meetings.delete(meetingId);
+  }
+}
+
 // Bot leave
 app.post('/api/meetings/leave', async (req, res) => {
   const { sessionId, meetingId } = req.body;
   if (sessionId) await bot.leaveMeeting(sessionId);
-  if (meetingId) {
-    const state = meetings.get(meetingId);
-    if (state) clearInterval(state.suggestionInterval);
-    meetings.delete(meetingId);
-    void setMeetingStatus(meetingId, 'completed', { end_time: new Date().toISOString() });
-  }
+  if (meetingId) void finalizeMeeting(meetingId, 'completed');
   res.json({ success: true });
 });
 

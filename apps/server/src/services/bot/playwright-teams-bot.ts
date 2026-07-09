@@ -145,9 +145,33 @@ export class PlaywrightTeamsBot implements MeetingBotProvider {
     // Track the last emitted text per speaker so we only push finalized lines
     // and never duplicate a caption that is still being updated in place.
     const lastBySpeaker = new Map<string, string>();
+    let consecutiveErrors = 0;
+    let lastCaptionAt = Date.now();
+    let captionRetries = 0;
+    let tick = 0;
 
     while (session.status === 'transcribing' || session.status === 'live') {
+      if (page.isClosed()) {
+        session.status = 'left';
+        this.emitStatus(session);
+        return;
+      }
       try {
+        tick++;
+
+        // Every ~6 s, check whether Teams ended the call (post-call screen).
+        if (tick % 5 === 0) {
+          const ended = await page.evaluate(() => {
+            const text = (document.body?.innerText || '').slice(0, 8000);
+            return /you left the meeting|meeting has ended|call ended|you've been removed/i.test(text);
+          });
+          if (ended) {
+            console.log(`[Bot ${session.sessionId}] Meeting ended — leaving`);
+            session.status = 'left';
+            this.emitStatus(session);
+            return;
+          }
+        }
         // Extract speaker-labeled caption items from the Teams DOM. Teams renders
         // each caption as a row containing an author element and a text element;
         // selectors vary across Teams builds, so we try several in the page.
@@ -184,10 +208,13 @@ export class PlaywrightTeamsBot implements MeetingBotProvider {
           return [] as Array<{ speaker: string; text: string }>;
         });
 
+        consecutiveErrors = 0;
+
         for (const item of items) {
           const prev = lastBySpeaker.get(item.speaker);
           if (item.text && item.text !== prev) {
             lastBySpeaker.set(item.speaker, item.text);
+            lastCaptionAt = Date.now();
             session.transcriptCallback?.({
               speaker: item.speaker,
               text: item.text,
@@ -196,9 +223,29 @@ export class PlaywrightTeamsBot implements MeetingBotProvider {
           }
         }
 
+        // If no caption text has arrived for 45 s, captions may never have been
+        // enabled (menu timing) — retry enabling them a few times.
+        if (Date.now() - lastCaptionAt > 45_000 && captionRetries < 3) {
+          captionRetries++;
+          console.log(`[Bot ${session.sessionId}] No captions for 45s — retrying enable (${captionRetries}/3)`);
+          await this.enableCaptions(page);
+          lastCaptionAt = Date.now();
+        }
+
         await page.waitForTimeout(1200);
       } catch (err) {
-        console.log(`[Bot] Caption capture error: ${err}`);
+        consecutiveErrors++;
+        console.log(`[Bot] Caption capture error (${consecutiveErrors}): ${err}`);
+        if (page.isClosed()) {
+          session.status = 'left';
+          this.emitStatus(session);
+          return;
+        }
+        if (consecutiveErrors >= 10) {
+          session.status = 'error';
+          this.emitStatus(session);
+          return;
+        }
         await page.waitForTimeout(2000);
       }
     }

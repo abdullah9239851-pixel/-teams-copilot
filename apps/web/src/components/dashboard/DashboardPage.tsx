@@ -12,9 +12,26 @@ You: What timeline are you hoping for?
 Client: We need a first version in about six weeks.
 Client: The decision maker is Sara from operations, but finance must approve the budget.`;
 
+interface PendingActionItem {
+  meetingId: string;
+  meetingTitle: string;
+  text: string;
+  owner: string;
+}
+
+interface RecentSummary {
+  meetingId: string;
+  meetingTitle: string;
+  summary: string;
+  updatedAt: string;
+}
+
 export function DashboardPage() {
   const [meetingTitle, setMeetingTitle] = useState('Practice Client Discovery');
   const [practiceTranscript, setPracticeTranscript] = useState(sampleTranscript);
+  const [meetingsThisWeek, setMeetingsThisWeek] = useState(0);
+  const [pendingActions, setPendingActions] = useState<PendingActionItem[]>([]);
+  const [recentSummaries, setRecentSummaries] = useState<RecentSummary[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [msConnected, setMsConnected] = useState(false);
   const [googleConnected, setGoogleConnected] = useState(false);
@@ -54,6 +71,13 @@ export function DashboardPage() {
   useEffect(() => {
     loadCalendar();
     apiJson<{ meetings: any[] }>('/api/meetings').then((d) => setRecorded(d.meetings)).catch(() => {});
+    apiJson<{ meetingsThisWeek: number; pendingActionItems: PendingActionItem[]; recentSummaries: RecentSummary[] }>('/api/stats')
+      .then((d) => {
+        setMeetingsThisWeek(d.meetingsThisWeek);
+        setPendingActions(d.pendingActionItems);
+        setRecentSummaries(d.recentSummaries);
+      })
+      .catch(() => {});
   }, []);
 
   const loadCalendar = async () => {
@@ -136,11 +160,57 @@ export function DashboardPage() {
         <p className="text-sm text-text-muted mt-1">Your meetings and activity overview</p>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-4 gap-4 mb-8">
+        <Stat label="Meetings this week" value={meetingsThisWeek} />
         <Stat label="Upcoming (14 days)" value={events.length} />
-        <Stat label="Meetings recorded" value={recorded.length} />
+        <Stat label="Action items pending" value={pendingActions.length} />
         <Stat label="Completed packages" value={completed} />
       </div>
+
+      {(pendingActions.length > 0 || recentSummaries.length > 0) && (
+        <div className="grid grid-cols-2 gap-6 mb-8">
+          <div>
+            <h2 className="text-lg font-medium text-text-primary mb-4">Pending Action Items</h2>
+            <div className="p-5 rounded-xl bg-bg-secondary border border-border space-y-2 max-h-72 overflow-y-auto">
+              {pendingActions.length === 0 ? (
+                <p className="text-sm text-text-muted">All action items are done. 🎉</p>
+              ) : (
+                pendingActions.slice(0, 8).map((item, i) => (
+                  <a
+                    key={`${item.meetingId}_${i}`}
+                    href={`/live/${item.meetingId}/post-meeting`}
+                    className="block p-3 rounded-lg bg-bg-primary border border-border hover:border-accent/40 transition-colors"
+                  >
+                    <p className="text-sm text-text-primary">{item.text}</p>
+                    <p className="text-xs text-text-muted mt-1">
+                      {item.meetingTitle} · <span className={item.owner === 'client' ? 'text-warning' : 'text-accent'}>{item.owner}</span>
+                    </p>
+                  </a>
+                ))
+              )}
+            </div>
+          </div>
+          <div>
+            <h2 className="text-lg font-medium text-text-primary mb-4">Recent Summaries</h2>
+            <div className="p-5 rounded-xl bg-bg-secondary border border-border space-y-2 max-h-72 overflow-y-auto">
+              {recentSummaries.length === 0 ? (
+                <p className="text-sm text-text-muted">No meeting summaries yet.</p>
+              ) : (
+                recentSummaries.map((s) => (
+                  <a
+                    key={s.meetingId}
+                    href={`/live/${s.meetingId}/post-meeting`}
+                    className="block p-3 rounded-lg bg-bg-primary border border-border hover:border-accent/40 transition-colors"
+                  >
+                    <p className="text-sm font-medium text-text-primary">{s.meetingTitle}</p>
+                    <p className="text-xs text-text-muted mt-1 line-clamp-2">{s.summary}</p>
+                  </a>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">

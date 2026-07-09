@@ -92,6 +92,36 @@ export function PostMeetingPage({ meetingId }: { meetingId: string }) {
   };
 
   const downloadMd = () => pkg && download(toMarkdown(pkg), `${title}.md`, 'text/markdown');
+
+  // Renders a print-styled copy of the package and opens the browser's print
+  // dialog with "Save as PDF" preselected by most browsers.
+  const downloadPdf = () => {
+    if (!pkg) return;
+    const esc = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>
+  body { font-family: Georgia, 'Times New Roman', serif; color: #1a1a1a; max-width: 720px; margin: 40px auto; line-height: 1.55; }
+  h1 { font-size: 22px; border-bottom: 2px solid #1a1a1a; padding-bottom: 8px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 28px; }
+  li { margin: 4px 0; }
+  pre { white-space: pre-wrap; font-family: inherit; }
+  .owner { font-size: 12px; color: #666; }
+</style></head><body>
+<h1>${esc(title)}</h1>
+<h2>Executive Summary</h2><pre>${esc(pkg.summary)}</pre>
+<h2>Action Items</h2><ul>${pkg.actionItems
+      .map((a) => `<li>${a.done ? '☑' : '☐'} ${esc(a.text)} <span class="owner">(${a.owner})</span></li>`)
+      .join('')}</ul>
+<h2>Requirements</h2><pre>${esc(pkg.requirementDoc)}</pre>
+<h2>Follow-up Email</h2><pre>${esc(pkg.emailDraft)}</pre>
+<script>window.onload = () => { window.print(); };</script>
+</body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { setError('Allow pop-ups to export as PDF.'); return; }
+    w.document.write(html);
+    w.document.close();
+  };
   const downloadDoc = () => {
     if (!pkg) return;
     const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'></head><body>${toMarkdown(pkg)
@@ -134,6 +164,9 @@ export function PostMeetingPage({ meetingId }: { meetingId: string }) {
             </button>
             <button onClick={downloadDoc} className="text-xs px-3 py-1.5 rounded-md bg-bg-elevated border border-border text-text-primary hover:border-accent/40">
               Download Word
+            </button>
+            <button onClick={downloadPdf} className="text-xs px-3 py-1.5 rounded-md bg-bg-elevated border border-border text-text-primary hover:border-accent/40">
+              Download PDF
             </button>
             <button onClick={generate} disabled={generating} className="text-xs px-3 py-1.5 rounded-md bg-bg-elevated border border-border text-text-primary hover:border-accent/40 disabled:opacity-50">
               {generating ? 'Regenerating…' : 'Regenerate'}

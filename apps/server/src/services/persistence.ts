@@ -135,6 +135,72 @@ export async function saveMeetingOutputs(
   if (error) console.error('[persist] saveMeetingOutputs:', error.message);
 }
 
+export async function getMeetingRow(
+  meetingId: string
+): Promise<{ join_link: string | null; title: string; user_id: string | null } | null> {
+  const db = getSupabase();
+  if (!db) return null;
+  const { data, error } = await db
+    .from('meetings')
+    .select('join_link, title, user_id')
+    .eq('id', meetingId)
+    .maybeSingle();
+  if (error) {
+    console.error('[persist] getMeetingRow:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function getMeetingPrep(
+  meetingId: string
+): Promise<{ user_goals: string; checklist: unknown[] } | null> {
+  const db = getSupabase();
+  if (!db) return null;
+  const { data, error } = await db
+    .from('meeting_prep')
+    .select('user_goals, checklist')
+    .eq('meeting_id', meetingId)
+    .maybeSingle();
+  if (error) {
+    console.error('[persist] getMeetingPrep:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function getFullTranscript(
+  meetingId: string
+): Promise<Array<{ speaker: string; text: string }>> {
+  const db = getSupabase();
+  if (!db) return [];
+  const { data, error } = await db
+    .from('transcript_segments')
+    .select('speaker, text')
+    .eq('meeting_id', meetingId)
+    .order('timestamp');
+  if (error) {
+    console.error('[persist] getFullTranscript:', error.message);
+    return [];
+  }
+  return data ?? [];
+}
+
+export async function hasMeetingOutputs(meetingId: string): Promise<boolean> {
+  const db = getSupabase();
+  if (!db) return false;
+  const { data, error } = await db
+    .from('meeting_outputs')
+    .select('meeting_id')
+    .eq('meeting_id', meetingId)
+    .maybeSingle();
+  if (error) {
+    console.error('[persist] hasMeetingOutputs:', error.message);
+    return false;
+  }
+  return Boolean(data);
+}
+
 export async function saveMeetingPrep(
   meetingId: string,
   prep: { user_goals: string; ai_questions: unknown[]; checklist: unknown[] }

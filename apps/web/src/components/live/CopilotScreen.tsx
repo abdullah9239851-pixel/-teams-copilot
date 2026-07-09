@@ -218,14 +218,36 @@ function PracticeCopilotScreen({ meetingId, meetingTitle }: { meetingId: string;
 }
 
 function CopilotContent({ meetingId, meetingTitle }: { meetingId: string; meetingTitle: string }) {
-  const { transcript, suggestions, messages, botStatus, checklist, sendMessage, sendFeedback } = useSocket();
+  const { transcript, suggestions, messages, botStatus, checklist, sendMessage, sendFeedback, isConnected, outputsReady } = useSocket();
   const chatEndRef = useRef<HTMLDivElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [rejoining, setRejoining] = useState(false);
+  const [rejoinError, setRejoinError] = useState('');
 
   const act = (id: string, feedback: 'used' | 'dismissed') => {
     sendFeedback(id, feedback);
     setDismissed((prev) => new Set(prev).add(id));
+  };
+
+  const rejoin = async () => {
+    setRejoining(true);
+    setRejoinError('');
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:4000'}/api/meetings/rejoin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ meetingId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Rejoin failed');
+      }
+    } catch (err: any) {
+      setRejoinError(err.message);
+    } finally {
+      setRejoining(false);
+    }
   };
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
@@ -244,7 +266,36 @@ function CopilotContent({ meetingId, meetingTitle }: { meetingId: string; meetin
   };
 
   return (
-    <div className="flex h-full">
+    <div className="flex flex-col h-full min-h-0">
+      {!isConnected && (
+        <div className="px-5 py-2 bg-warning/10 border-b border-warning/30 text-xs text-warning">
+          Connection to the copilot server lost — reconnecting… The meeting itself is unaffected.
+        </div>
+      )}
+      {(botStatus === 'error' || botStatus === 'left') && (
+        <div className="px-5 py-2 bg-bg-elevated border-b border-border flex items-center gap-3 text-xs">
+          <span className={botStatus === 'error' ? 'text-danger' : 'text-text-muted'}>
+            {botStatus === 'error' ? 'The bot ran into a problem and left the meeting.' : 'The bot has left the meeting.'}
+          </span>
+          <button
+            onClick={rejoin}
+            disabled={rejoining}
+            className="px-3 py-1 rounded-md bg-accent text-white hover:bg-accent-hover disabled:opacity-50"
+          >
+            {rejoining ? 'Rejoining…' : 'Rejoin with bot'}
+          </button>
+          {rejoinError && <span className="text-danger">{rejoinError}</span>}
+        </div>
+      )}
+      {outputsReady && (
+        <div className="px-5 py-2 bg-success/10 border-b border-success/30 flex items-center gap-3 text-xs">
+          <span className="text-success">Post-meeting package is ready.</span>
+          <a href={`/live/${meetingId}/post-meeting`} className="px-3 py-1 rounded-md bg-success text-white hover:opacity-90">
+            Open package
+          </a>
+        </div>
+      )}
+      <div className="flex flex-1 min-h-0">
       {/* ─── LEFT: Live Transcript ─────────────── */}
       <div className="w-2/5 border-r border-border flex flex-col">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
@@ -359,6 +410,7 @@ function CopilotContent({ meetingId, meetingTitle }: { meetingId: string; meetin
             }}
           />
         </div>
+      </div>
       </div>
     </div>
   );

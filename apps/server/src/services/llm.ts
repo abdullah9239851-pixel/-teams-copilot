@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
-import type { Suggestion, SuggestionType } from '@teams-copilot/shared';
+import type { Suggestion, SuggestionType, MeetingMode, KeyPoint, TrackerItem } from '@teams-copilot/shared';
+import { MODE_TRACKER_FIELDS } from '@teams-copilot/shared';
 
 function getOpenAI() {
   const apiKey = process.env.LLM_API_KEY;
@@ -177,7 +178,14 @@ export async function evaluateChecklist(
 }
 
 // Post-meeting generation
-export async function generatePostMeeting(transcript: string, goals: string) {
+export interface PostMeetingPackage {
+  summary: string;
+  actionItems: Array<{ text: string; owner: 'yours' | 'client'; done?: boolean }>;
+  requirementDoc: string;
+  emailDraft: string;
+}
+
+export async function generatePostMeeting(transcript: string, goals: string): Promise<PostMeetingPackage | null> {
   const response = await getOpenAI().chat.completions.create({
     model: process.env.LLM_MODEL || 'llama-3.3-70b-versatile',
     messages: [
@@ -199,5 +207,23 @@ export async function generatePostMeeting(transcript: string, goals: string) {
     temperature: 0.5,
   });
 
-  return response.choices[0]?.message?.content;
+  const content = response.choices[0]?.message?.content;
+  if (!content) return null;
+  try {
+    const parsed = JSON.parse(content);
+    return {
+      summary: String(parsed.summary || ''),
+      actionItems: Array.isArray(parsed.actionItems)
+        ? parsed.actionItems.map((a: any) => ({
+            text: String(a?.text ?? a ?? ''),
+            owner: a?.owner === 'client' ? 'client' : 'yours',
+            done: false,
+          }))
+        : [],
+      requirementDoc: String(parsed.requirementDoc || ''),
+      emailDraft: String(parsed.emailDraft || ''),
+    };
+  } catch {
+    return null;
+  }
 }
