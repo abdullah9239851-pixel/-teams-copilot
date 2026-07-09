@@ -3,6 +3,7 @@
 import { useRef, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useSocket, SocketProvider } from './SocketProvider';
+import { apiJson } from '@/lib/api';
 
 const typeIcons: Record<string, string> = {
   question: '?',
@@ -89,18 +90,28 @@ function PracticeCopilotScreen({ meetingId, meetingTitle }: { meetingId: string;
     ? Math.round((checklist.filter((item) => item.status === 'Confirmed').length / checklist.length) * 100)
     : 0;
 
-  const askPracticeAI = () => {
+  const [asking, setAsking] = useState(false);
+
+  const askPracticeAI = async () => {
     const trimmed = question.trim();
-    if (!trimmed) return;
+    if (!trimmed || asking) return;
 
-    const answer = transcript.length === 0
-      ? 'No transcript has played yet.'
-      : trimmed.toLowerCase().includes('summary')
-        ? `Current summary: ${transcript.slice(-3).map((line) => line.text).join(' ')}`
-        : `Transcript-grounded answer: ${transcriptText.includes(trimmed.toLowerCase().split(' ')[0]) ? 'This topic appears in the transcript.' : 'Not discussed clearly in the transcript yet.'}`;
-
-    setMessages((current) => [...current, { role: 'user', content: trimmed }, { role: 'assistant', content: answer }]);
+    const transcriptStr = transcript.map((line) => `${line.speaker}: ${line.text}`).join('\n');
+    setMessages((current) => [...current, { role: 'user', content: trimmed }]);
     setQuestion('');
+    setAsking(true);
+    try {
+      const { answer } = await apiJson<{ answer: string }>('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: transcriptStr, message: trimmed }),
+      });
+      setMessages((current) => [...current, { role: 'assistant', content: answer || 'No answer.' }]);
+    } catch {
+      setMessages((current) => [...current, { role: 'assistant', content: 'Sorry, the AI could not answer right now.' }]);
+    } finally {
+      setAsking(false);
+    }
   };
 
   return (
@@ -172,14 +183,15 @@ function PracticeCopilotScreen({ meetingId, meetingTitle }: { meetingId: string;
             <h2 className="text-sm font-semibold text-text-primary">Ask AI</h2>
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {messages.length === 0 && <p className="text-xs text-text-muted text-center mt-12">Ask about the simulated transcript.</p>}
+            {messages.length === 0 && <p className="text-xs text-text-muted text-center mt-12">Ask the AI about the transcript, or anything else.</p>}
             {messages.map((msg, index) => (
               <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] px-3 py-2 rounded-lg text-sm ${msg.role === 'user' ? 'bg-accent text-white' : 'bg-bg-elevated border border-border text-text-primary'}`}>
+                <div className={`max-w-[85%] px-3 py-2 rounded-lg text-sm whitespace-pre-wrap ${msg.role === 'user' ? 'bg-accent text-white' : 'bg-bg-elevated border border-border text-text-primary'}`}>
                   {msg.content}
                 </div>
               </div>
             ))}
+            {asking && <p className="text-xs text-text-muted">AI is thinking…</p>}
           </div>
           <div className="p-3 border-t border-border">
             <input
@@ -189,8 +201,9 @@ function PracticeCopilotScreen({ meetingId, meetingTitle }: { meetingId: string;
               onKeyDown={(event) => {
                 if (event.key === 'Enter') askPracticeAI();
               }}
-              placeholder="Ask the AI..."
-              className="w-full px-3 py-2 rounded-lg bg-bg-primary border border-border text-text-primary placeholder:text-text-muted text-sm focus:outline-none focus:border-accent"
+              disabled={asking}
+              placeholder={asking ? 'Thinking…' : 'Ask the AI...'}
+              className="w-full px-3 py-2 rounded-lg bg-bg-primary border border-border text-text-primary placeholder:text-text-muted text-sm focus:outline-none focus:border-accent disabled:opacity-50"
             />
           </div>
         </div>

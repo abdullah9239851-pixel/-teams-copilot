@@ -58,6 +58,31 @@ export async function generatePrepQuestions(input: {
   }
 }
 
+// Answer a question grounded in a transcript (+ optional KB). Used by the
+// practice simulator's "Ask AI" and any transcript Q&A on the web side.
+export async function chatOverTranscript(
+  transcript: string,
+  message: string,
+  kbContext = ''
+): Promise<string> {
+  const res = await getClient().chat.completions.create({
+    model: MODEL(),
+    messages: [
+      {
+        role: 'system',
+        content: `You are a meeting copilot assistant. Use the transcript and knowledge base to answer the user's question briefly and specifically. If the answer isn't in the transcript, say so and offer your best general guidance.`,
+      },
+      {
+        role: 'user',
+        content: `Transcript so far:\n${transcript || '(empty)'}\n\nKnowledge base:\n${kbContext || '(none)'}\n\nQuestion: ${message}`,
+      },
+    ],
+    max_tokens: 500,
+    temperature: 0.6,
+  });
+  return res.choices[0]?.message?.content || '';
+}
+
 export interface PostMeetingPackage {
   summary: string;
   actionItems: Array<{ text: string; owner: 'yours' | 'client' }>;
