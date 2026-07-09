@@ -142,45 +142,64 @@ export class PlaywrightTeamsBot implements MeetingBotProvider {
   }
 
   private async captureCaptions(page: Page, session: ActiveSession) {
-    let lastText = '';
+    // Track the last emitted text per speaker so we only push finalized lines
+    // and never duplicate a caption that is still being updated in place.
+    const lastBySpeaker = new Map<string, string>();
 
     while (session.status === 'transcribing' || session.status === 'live') {
       try {
-        // Teams captions appear in specific DOM elements
-        // Try multiple possible selectors
-        const captionSelectors = [
-          '[data-tid="captions-container"] span',
-          '.ts-captions-container span',
-          'div[class*="caption"] span',
-          '#captions-container span',
-        ];
+        // Extract speaker-labeled caption items from the Teams DOM. Teams renders
+        // each caption as a row containing an author element and a text element;
+        // selectors vary across Teams builds, so we try several in the page.
+        const items = await page.evaluate(() => {
+          const rowSelectors = [
+            '[data-tid="closed-caption-renderer-wrapper"] [data-tid="closed-caption-message-content"]',
+            '[data-tid="closed-caption-renderer-wrapper"] li',
+            '[data-tid="captions-container"] li',
+            '.ts-captions-container .ui-chat__item',
+            'div[class*="caption"] li',
+          ];
+          const authorSelectors = ['[data-tid="author"]', '[class*="author"]', '.ui-chat__message__author'];
+          const textSelectors = ['[data-tid="caption-text"]', '[class*="caption-text"]', '[data-tid="closed-caption-text"]'];
 
-        let captionText = '';
-        for (const selector of captionSelectors) {
-          const elements = await page.locator(selector).all();
-          if (elements.length > 0) {
-            const texts = await Promise.all(elements.map((el) => el.textContent()));
-            captionText = texts.filter(Boolean).join(' ');
-            break;
+          const pick = (root: Element, sels: string[]): string => {
+            for (const s of sels) {
+              const el = root.querySelector(s);
+              if (el?.textContent?.trim()) return el.textContent.trim();
+            }
+            return '';
+          };
+
+          for (const rowSel of rowSelectors) {
+            const rows = Array.from(document.querySelectorAll(rowSel));
+            if (rows.length === 0) continue;
+            return rows
+              .map((row) => {
+                const speaker = pick(row, authorSelectors) || 'Speaker';
+                const text = pick(row, textSelectors) || (row.textContent?.trim() ?? '');
+                return { speaker, text };
+              })
+              .filter((r) => r.text);
+          }
+          return [] as Array<{ speaker: string; text: string }>;
+        });
+
+        for (const item of items) {
+          const prev = lastBySpeaker.get(item.speaker);
+          if (item.text && item.text !== prev) {
+            lastBySpeaker.set(item.speaker, item.text);
+            session.transcriptCallback?.({
+              speaker: item.speaker,
+              text: item.text,
+              timestamp: Date.now(),
+            });
           }
         }
 
-        if (captionText && captionText !== lastText) {
-          // New caption detected
-          lastText = captionText;
-          const event: TranscriptEvent = {
-            speaker: 'Speaker',
-            text: captionText,
-            timestamp: Date.now(),
-          };
-          session.transcriptCallback?.(event);
-        }
-
-        // Poll every 1s
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(1200);
       } catch (err) {
         console.log(`[Bot] Caption capture error: ${err}`);
-        break;
+        await page.waitForTimeout(2000);
       }
     }
   }

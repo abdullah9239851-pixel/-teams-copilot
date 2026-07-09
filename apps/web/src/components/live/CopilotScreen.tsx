@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useSocket, SocketProvider } from './SocketProvider';
 
 const typeIcons: Record<string, string> = {
@@ -10,10 +11,204 @@ const typeIcons: Record<string, string> = {
   commitment: '→',
 };
 
+function parseTranscriptLine(line: string, index: number) {
+  const separator = line.indexOf(':');
+  const speaker = separator > 0 ? line.slice(0, separator).trim() : `Speaker ${index + 1}`;
+  const text = separator > 0 ? line.slice(separator + 1).trim() : line;
+
+  return {
+    id: `practice_${index}`,
+    speaker,
+    text,
+    timestamp: Date.now() + index,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function PracticeCopilotScreen({ meetingId, meetingTitle }: { meetingId: string; meetingTitle: string }) {
+  const searchParams = useSearchParams();
+  const [lines, setLines] = useState<ReturnType<typeof parseTranscriptLine>[]>([]);
+  const [visibleCount, setVisibleCount] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const [question, setQuestion] = useState('');
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const title = searchParams.get('title') || meetingTitle;
+
+  useEffect(() => {
+    const raw = localStorage.getItem(`practice_session_${meetingId}`);
+    if (!raw) return;
+
+    try {
+      const saved = JSON.parse(raw) as { lines?: string[] };
+      setLines((saved.lines || []).map(parseTranscriptLine));
+    } catch {
+      setLines([]);
+    }
+  }, [meetingId]);
+
+  useEffect(() => {
+    if (!playing) return;
+    if (visibleCount >= lines.length) {
+      setPlaying(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => setVisibleCount((count) => count + 1), 1600);
+    return () => window.clearTimeout(timer);
+  }, [playing, visibleCount, lines.length]);
+
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [visibleCount]);
+
+  const transcript = lines.slice(0, visibleCount);
+  const transcriptText = transcript.map((line) => `${line.speaker}: ${line.text}`).join('\n').toLowerCase();
+
+  const checklist = useMemo(() => {
+    const items = [
+      ['Problem', ['problem', 'struggling', 'issue', 'pain']],
+      ['Budget', ['budget', 'cost', 'price', 'finance']],
+      ['Timeline', ['timeline', 'week', 'month', 'deadline']],
+      ['Decision maker', ['decision maker', 'approve', 'approval']],
+      ['Success criteria', ['success', 'goal', 'outcome']],
+    ] as const;
+
+    return items.map(([label, keywords]) => ({
+      label,
+      status: keywords.some((keyword) => transcriptText.includes(keyword)) ? 'Confirmed' : 'Missing',
+    }));
+  }, [transcriptText]);
+
+  const suggestions = checklist
+    .filter((item) => item.status === 'Missing')
+    .slice(0, 3)
+    .map((item) => `Ask about ${item.label.toLowerCase()}.`);
+
+  const completeness = checklist.length
+    ? Math.round((checklist.filter((item) => item.status === 'Confirmed').length / checklist.length) * 100)
+    : 0;
+
+  const askPracticeAI = () => {
+    const trimmed = question.trim();
+    if (!trimmed) return;
+
+    const answer = transcript.length === 0
+      ? 'No transcript has played yet.'
+      : trimmed.toLowerCase().includes('summary')
+        ? `Current summary: ${transcript.slice(-3).map((line) => line.text).join(' ')}`
+        : `Transcript-grounded answer: ${transcriptText.includes(trimmed.toLowerCase().split(' ')[0]) ? 'This topic appears in the transcript.' : 'Not discussed clearly in the transcript yet.'}`;
+
+    setMessages((current) => [...current, { role: 'user', content: trimmed }, { role: 'assistant', content: answer }]);
+    setQuestion('');
+  };
+
+  return (
+    <div className="flex flex-col h-screen bg-bg-primary">
+      <div className="h-12 flex items-center justify-between px-5 border-b border-border bg-bg-secondary">
+        <h1 className="text-sm font-medium text-text-primary">{title}</h1>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setPlaying((value) => !value)} className="text-xs px-3 py-1.5 rounded-md bg-accent text-white">
+            {playing ? 'Pause' : 'Play'}
+          </button>
+          <button onClick={() => setVisibleCount((count) => Math.min(lines.length, count + 1))} className="text-xs px-3 py-1.5 rounded-md bg-bg-elevated text-text-primary border border-border">
+            Next
+          </button>
+          <button onClick={() => { setVisibleCount(0); setPlaying(false); setMessages([]); }} className="text-xs px-3 py-1.5 rounded-md bg-bg-elevated text-text-primary border border-border">
+            Restart
+          </button>
+          <span className="text-xs text-text-muted">Practice mode</span>
+        </div>
+      </div>
+
+      <div className="flex flex-1 min-h-0">
+        <div className="w-2/5 border-r border-border flex flex-col">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-text-primary">Simulated Transcript</h2>
+            <span className="text-xs text-text-muted">{visibleCount}/{lines.length}</span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {transcript.length === 0 && <p className="text-sm text-text-muted text-center mt-12">Press Play to start the transcript.</p>}
+            {transcript.map((seg) => (
+              <div key={seg.id} className="text-sm leading-relaxed">
+                <span className="font-semibold text-accent text-xs">{seg.speaker}</span>
+                <p className="text-text-primary mt-0.5">{seg.text}</p>
+              </div>
+            ))}
+            <div ref={transcriptEndRef} />
+          </div>
+        </div>
+
+        <div className="w-[35%] border-r border-border flex flex-col">
+          <div className="px-4 py-3 border-b border-border">
+            <h2 className="text-sm font-semibold text-text-primary">Meeting Coach</h2>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="p-4 rounded-lg bg-bg-elevated border border-border">
+              <p className="text-xs uppercase text-text-muted mb-1">Completeness</p>
+              <p className="text-2xl font-semibold text-text-primary">{completeness}%</p>
+            </div>
+            <div className="space-y-2">
+              {checklist.map((item) => (
+                <div key={item.label} className="flex items-center justify-between text-sm p-3 rounded-lg bg-bg-elevated border border-border">
+                  <span className="text-text-primary">{item.label}</span>
+                  <span className={item.status === 'Confirmed' ? 'text-success' : 'text-warning'}>{item.status}</span>
+                </div>
+              ))}
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-text-primary mb-2">Suggested Questions</h3>
+              <div className="space-y-2">
+                {suggestions.length === 0 ? <p className="text-sm text-text-muted">Core discovery items covered.</p> : suggestions.map((item) => (
+                  <div key={item} className="p-3 rounded-lg bg-accent/10 border border-accent/20 text-sm text-text-primary">{item}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="w-[25%] flex flex-col">
+          <div className="px-4 py-3 border-b border-border">
+            <h2 className="text-sm font-semibold text-text-primary">Ask AI</h2>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {messages.length === 0 && <p className="text-xs text-text-muted text-center mt-12">Ask about the simulated transcript.</p>}
+            {messages.map((msg, index) => (
+              <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] px-3 py-2 rounded-lg text-sm ${msg.role === 'user' ? 'bg-accent text-white' : 'bg-bg-elevated border border-border text-text-primary'}`}>
+                  {msg.content}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="p-3 border-t border-border">
+            <input
+              type="text"
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') askPracticeAI();
+              }}
+              placeholder="Ask the AI..."
+              className="w-full px-3 py-2 rounded-lg bg-bg-primary border border-border text-text-primary placeholder:text-text-muted text-sm focus:outline-none focus:border-accent"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CopilotContent({ meetingId, meetingTitle }: { meetingId: string; meetingTitle: string }) {
-  const { transcript, suggestions, messages, botStatus, sendMessage } = useSocket();
+  const { transcript, suggestions, messages, botStatus, checklist, sendMessage, sendFeedback } = useSocket();
   const chatEndRef = useRef<HTMLDivElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+
+  const act = (id: string, feedback: 'used' | 'dismissed') => {
+    sendFeedback(id, feedback);
+    setDismissed((prev) => new Set(prev).add(id));
+  };
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
   useEffect(() => { transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [transcript]);
@@ -52,31 +247,58 @@ function CopilotContent({ meetingId, meetingTitle }: { meetingId: string; meetin
         </div>
       </div>
 
-      {/* ─── CENTER: AI Suggestions ────────────── */}
+      {/* ─── CENTER: Checklist + AI Suggestions ── */}
       <div className="w-[35%] border-r border-border flex flex-col">
+        {checklist.length > 0 && (
+          <div className="px-4 py-3 border-b border-border">
+            <h2 className="text-sm font-semibold text-text-primary mb-2">Checklist</h2>
+            <div className="space-y-1.5">
+              {checklist.map((item, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs">
+                  <span className={item.answered ? 'text-success' : 'text-text-muted'}>
+                    {item.answered ? '✓' : '○'}
+                  </span>
+                  <span className={item.answered ? 'text-text-muted line-through' : 'text-text-secondary'}>
+                    {item.text}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="px-4 py-3 border-b border-border">
           <h2 className="text-sm font-semibold text-text-primary">AI Suggestions</h2>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {suggestions.length === 0 && (
+          {suggestions.filter((s) => !dismissed.has(s.id)).length === 0 && (
             <p className="text-sm text-text-muted text-center mt-12">
               AI will suggest questions, risks, and topics you might have missed...
             </p>
           )}
-          {suggestions.map((s, i) => (
-            <div
-              key={s.id || i}
-              className="p-3 rounded-lg bg-bg-elevated border border-border hover:border-accent/30 transition-colors"
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs">{typeIcons[s.type] || '•'}</span>
-                <span className="text-[10px] uppercase tracking-wider text-text-muted font-medium">
-                  {s.type.replace('_', ' ')}
-                </span>
+          {suggestions
+            .filter((s) => !dismissed.has(s.id))
+            .map((s, i) => (
+              <div
+                key={s.id || i}
+                className="p-3 rounded-lg bg-bg-elevated border border-border hover:border-accent/30 transition-colors group"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xs">{typeIcons[s.type] || '•'}</span>
+                  <span className="text-[10px] uppercase tracking-wider text-text-muted font-medium">
+                    {s.type.replace('_', ' ')}
+                  </span>
+                </div>
+                <p className="text-sm text-text-primary">{s.content}</p>
+                <div className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => act(s.id, 'used')} className="text-[10px] px-2 py-0.5 rounded bg-success/10 text-success hover:bg-success/20">
+                    Used
+                  </button>
+                  <button onClick={() => act(s.id, 'dismissed')} className="text-[10px] px-2 py-0.5 rounded bg-bg-primary text-text-muted hover:text-text-primary">
+                    Dismiss
+                  </button>
+                </div>
               </div>
-              <p className="text-sm text-text-primary">{s.content}</p>
-            </div>
-          ))}
+            ))}
         </div>
       </div>
 
@@ -125,6 +347,12 @@ function CopilotContent({ meetingId, meetingTitle }: { meetingId: string; meetin
 }
 
 export function CopilotScreen({ meetingId, meetingTitle }: { meetingId: string; meetingTitle: string }) {
+  const searchParams = useSearchParams();
+
+  if (searchParams.get('practice') === '1') {
+    return <PracticeCopilotScreen meetingId={meetingId} meetingTitle={meetingTitle} />;
+  }
+
   return (
     <SocketProvider meetingId={meetingId}>
       <div className="flex flex-col h-screen bg-bg-primary">

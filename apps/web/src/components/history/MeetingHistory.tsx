@@ -2,58 +2,85 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { apiJson } from '@/lib/api';
+
+interface MeetingRow {
+  id: string;
+  title: string;
+  status: string;
+  mode: string;
+  start_time: string;
+  clients?: { name: string; company: string } | null;
+}
 
 export function MeetingHistory() {
-  const [meetings, setMeetings] = useState<any[]>([]);
+  const [meetings, setMeetings] = useState<MeetingRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
   const router = useRouter();
 
   useEffect(() => {
-    fetch('http://localhost:4000/api/meetings')
-      .then(r => r.json())
-      .then(setMeetings)
-      .catch(() => {});
+    apiJson<{ meetings: MeetingRow[] }>('/api/meetings')
+      .then((d) => setMeetings(d.meetings))
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
+  const filtered = meetings.filter(
+    (m) =>
+      m.title?.toLowerCase().includes(query.toLowerCase()) ||
+      m.clients?.name?.toLowerCase().includes(query.toLowerCase())
+  );
+
+  const open = (m: MeetingRow) =>
+    router.push(m.status === 'completed' ? `/live/${m.id}/post-meeting` : `/briefing/${m.id}`);
+
+  const statusColor = (s: string) =>
+    s === 'completed' ? 'text-success' : s === 'live' ? 'text-accent' : s === 'failed' ? 'text-danger' : 'text-text-muted';
+
   return (
-    <div className="p-8">
-      <div className="mb-8">
+    <div className="p-8 max-w-4xl">
+      <div className="mb-6">
         <h1 className="text-2xl font-semibold text-text-primary">Meeting History</h1>
         <p className="text-sm text-text-muted mt-1">All past copilot sessions</p>
       </div>
 
-      {meetings.length === 0 ? (
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search by title or client…"
+        className="w-full mb-5 px-4 py-2.5 rounded-lg bg-bg-secondary border border-border text-text-primary placeholder:text-text-muted text-sm focus:outline-none focus:border-accent"
+      />
+
+      {loading ? (
+        <p className="text-sm text-text-muted">Loading…</p>
+      ) : filtered.length === 0 ? (
         <div className="p-12 rounded-xl bg-bg-secondary border border-border text-center">
           <p className="text-text-muted">No meetings yet</p>
-          <p className="text-sm text-text-muted mt-1">Start a copilot session from the dashboard</p>
+          <p className="text-sm text-text-muted mt-1">Prepare a meeting from the dashboard to get started</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {meetings.map((m) => (
-            <div
+          {filtered.map((m) => (
+            <button
               key={m.id}
-              onClick={() => router.push(`/live/${m.id}`)}
-              className="p-4 rounded-xl bg-bg-secondary border border-border hover:border-accent/30 transition-colors cursor-pointer"
+              onClick={() => open(m)}
+              className="w-full text-left p-4 rounded-xl bg-bg-secondary border border-border hover:border-accent/30 transition-colors"
             >
               <div className="flex justify-between items-center">
-                <p className="text-sm text-text-primary font-medium">{m.id}</p>
-                <span className="text-xs text-text-muted">{m.segments} transcript segments</span>
+                <div>
+                  <p className="text-sm text-text-primary font-medium">{m.title}</p>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    {m.clients?.name ? `${m.clients.name} · ` : ''}
+                    {m.start_time ? new Date(m.start_time).toLocaleString() : ''}
+                  </p>
+                </div>
+                <span className={`text-xs capitalize ${statusColor(m.status)}`}>{m.status}</span>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}
-
-      <div className="mt-8">
-        <h2 className="text-lg font-medium text-text-primary mb-4">Post-Meeting Package</h2>
-        <p className="text-sm text-text-muted mb-4">
-          Generate a summary, action items, requirement doc, and email draft for any completed meeting.
-        </p>
-        <div className="p-6 rounded-xl bg-bg-secondary border border-border">
-          <p className="text-sm text-text-muted">
-            Select a meeting from the list above, then click "Generate Package" to create your post-meeting deliverables.
-          </p>
-        </div>
-      </div>
     </div>
   );
 }

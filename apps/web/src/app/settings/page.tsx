@@ -1,11 +1,15 @@
-export default function SettingsPage() {
+import { Suspense } from 'react';
+import { AppShell } from '@/components/layout/AppShell';
+import { SettingsPage } from '@/components/settings/SettingsPage';
+
+export const dynamic = 'force-dynamic';
+
+export default function SettingsRoute() {
   return (
-    <div className="p-8">
-      <h1 className="text-2xl font-semibold text-text-primary mb-2">Settings</h1>
-      <p className="text-sm text-text-muted mb-8">Manage your account and preferences</p>
-      <div className="p-6 rounded-xl bg-bg-secondary border border-border">
-        <p className="text-sm text-text-muted">Account settings coming soon</p>
-      </div>
-    </div>
+    <AppShell>
+      <Suspense fallback={<div className="p-8 text-text-muted">Loading…</div>}>
+        <SettingsPage />
+      </Suspense>
+    </AppShell>
   );
 }

@@ -99,9 +99,86 @@ Keep answers brief and focused. If you don't know something not in the transcrip
   return fullResponse;
 }
 
+// Pre-meeting prep: generate discovery questions from agenda + KB + goals
+export async function generatePrepQuestions(input: {
+  title: string;
+  agenda: string;
+  goals: string;
+  clientHistory: string;
+  kbContext: string;
+}): Promise<string[]> {
+  const response = await getOpenAI().chat.completions.create({
+    model: process.env.LLM_MODEL || 'llama-3.3-70b-versatile',
+    messages: [
+      {
+        role: 'system',
+        content: `You prepare a salesperson for a client discovery call. Return a JSON object with a "questions" array of 6-10 specific, high-value discovery questions.
+Ground them in the agenda, the user's goals, prior client history, and the company's knowledge base (services/pricing) when relevant. Each question is one sentence.`,
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          meetingTitle: input.title,
+          agenda: input.agenda || 'Not specified',
+          userGoals: input.goals || 'Not specified',
+          clientHistory: input.clientHistory || 'No prior meetings',
+          knowledgeBase: input.kbContext || 'No KB context available',
+        }),
+      },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.6,
+    max_tokens: 600,
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) return [];
+  try {
+    const parsed = JSON.parse(content);
+    const questions = parsed.questions || parsed;
+    return Array.isArray(questions) ? questions.map(String).slice(0, 10) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Live checklist: decide which prep questions have now been answered
+export async function evaluateChecklist(
+  transcriptWindow: string,
+  checklist: string[]
+): Promise<number[]> {
+  if (checklist.length === 0 || !transcriptWindow.trim()) return [];
+  const response = await getOpenAI().chat.completions.create({
+    model: process.env.LLM_MODEL || 'llama-3.3-70b-versatile',
+    messages: [
+      {
+        role: 'system',
+        content: `Given a meeting transcript and a checklist of topics/questions, return a JSON object {"answered": number[]} listing the 0-based indexes of checklist items that have clearly been addressed in the transcript. Only include an index if the topic was genuinely covered.`,
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({ transcript: transcriptWindow, checklist }),
+      },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0,
+    max_tokens: 150,
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) return [];
+  try {
+    const parsed = JSON.parse(content);
+    const answered = parsed.answered || [];
+    return Array.isArray(answered) ? answered.filter((n: unknown) => Number.isInteger(n)) : [];
+  } catch {
+    return [];
+  }
+}
+
 // Post-meeting generation
 export async function generatePostMeeting(transcript: string, goals: string) {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: process.env.LLM_MODEL || 'llama-3.3-70b-versatile',
     messages: [
       {

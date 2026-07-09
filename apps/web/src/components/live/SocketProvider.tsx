@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
-import type { ServerToClientEvents, ClientToServerEvents, BotStatus, TranscriptSegment, Suggestion, CopilotMessage } from '@teams-copilot/shared';
+import type { ServerToClientEvents, ClientToServerEvents, BotStatus, TranscriptSegment, Suggestion, CopilotMessage, ChecklistItem } from '@teams-copilot/shared';
 
 interface SocketContextType {
   socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
@@ -11,9 +11,11 @@ interface SocketContextType {
   transcript: TranscriptSegment[];
   suggestions: Suggestion[];
   messages: CopilotMessage[];
+  checklist: ChecklistItem[];
   joinMeeting: (meetingId: string) => void;
   leaveMeeting: (meetingId: string) => void;
   sendMessage: (content: string) => void;
+  sendFeedback: (suggestionId: string, feedback: 'used' | 'dismissed') => void;
 }
 
 const SocketContext = createContext<SocketContextType>(null!);
@@ -25,6 +27,7 @@ export function SocketProvider({ children, meetingId }: { children: React.ReactN
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [messages, setMessages] = useState<CopilotMessage[]>([]);
+  const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
 
   useEffect(() => {
     const s = io(process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:4000') as Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -42,6 +45,10 @@ export function SocketProvider({ children, meetingId }: { children: React.ReactN
 
     s.on('bot_status', (status) => {
       setBotStatus(status);
+    });
+
+    s.on('checklist_update', (items) => {
+      setChecklist(items);
     });
 
     s.on('copilot_message', (msg) => {
@@ -71,9 +78,12 @@ export function SocketProvider({ children, meetingId }: { children: React.ReactN
   const sendMessage = (content: string) => {
     if (meetingId) socket?.emit('copilot_message', meetingId, content);
   };
+  const sendFeedback = (suggestionId: string, feedback: 'used' | 'dismissed') => {
+    if (meetingId) socket?.emit('suggestion_feedback', meetingId, suggestionId, feedback);
+  };
 
   return (
-    <SocketContext.Provider value={{ socket, isConnected, botStatus, transcript, suggestions, messages, joinMeeting, leaveMeeting, sendMessage }}>
+    <SocketContext.Provider value={{ socket, isConnected, botStatus, transcript, suggestions, messages, checklist, joinMeeting, leaveMeeting, sendMessage, sendFeedback }}>
       {children}
     </SocketContext.Provider>
   );

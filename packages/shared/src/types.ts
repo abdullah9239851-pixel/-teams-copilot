@@ -125,6 +125,7 @@ export interface ClientToServerEvents {
   join_meeting: (meetingId: string) => void;
   leave_meeting: (meetingId: string) => void;
   copilot_message: (meetingId: string, content: string) => void;
+  suggestion_feedback: (meetingId: string, suggestionId: string, feedback: 'used' | 'dismissed') => void;
 }
 
-export type BotStatus = 'joining' | 'live' | 'transcribing' | 'ai_listening' | 'left' | 'error';
+export type BotStatus = 'joining' | 'in_lobby' | 'live' | 'transcribing' | 'ai_listening' | 'left' | 'error';
