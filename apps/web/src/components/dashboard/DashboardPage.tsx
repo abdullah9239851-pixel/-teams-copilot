@@ -16,13 +16,16 @@ export function DashboardPage() {
   const [meetingTitle, setMeetingTitle] = useState('Practice Client Discovery');
   const [practiceTranscript, setPracticeTranscript] = useState(sampleTranscript);
   const [calendarLoading, setCalendarLoading] = useState(true);
-  const [calendarConnected, setCalendarConnected] = useState(false);
+  const [msConnected, setMsConnected] = useState(false);
+  const [googleConnected, setGoogleConnected] = useState(false);
   const [calendarError, setCalendarError] = useState('');
   const [events, setEvents] = useState<any[]>([]);
   const [recorded, setRecorded] = useState<any[]>([]);
   const [preparingId, setPreparingId] = useState('');
   const router = useRouter();
   const supabase = createClient();
+
+  const calendarConnected = msConnected || googleConnected;
 
   useEffect(() => {
     loadCalendar();
@@ -36,25 +39,34 @@ export function DashboardPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setCalendarLoading(false); return; }
 
-      const response = await apiFetch('/api/microsoft/events');
-      const data = await response.json();
-      if (!response.ok) {
-        setCalendarError(data.error || 'Could not load Microsoft calendar');
-      } else {
-        setCalendarConnected(Boolean(data.connected));
-        setEvents(data.meetings || []);
-      }
+      // Pull from both calendar sources and merge. A Teams meeting invited to a
+      // Google Calendar carries its Teams join link inside the event body.
+      const [ms, google] = await Promise.all([
+        apiFetch('/api/microsoft/events').then((r) => r.json()).catch(() => ({})),
+        apiFetch('/api/google/events').then((r) => r.json()).catch(() => ({})),
+      ]);
+
+      setMsConnected(Boolean(ms.connected));
+      setGoogleConnected(Boolean(google.connected));
+
+      const merged = [
+        ...(ms.meetings || []).map((m: any) => ({ ...m, source: 'microsoft' })),
+        ...(google.meetings || []).map((m: any) => ({ ...m, source: 'google' })),
+      ].sort((a, b) => new Date(a.start || 0).getTime() - new Date(b.start || 0).getTime());
+      setEvents(merged);
+
+      if (ms.error && google.error) setCalendarError(google.error);
     } catch (error: any) {
-      setCalendarError(error.message || 'Could not load Microsoft calendar');
+      setCalendarError(error.message || 'Could not load calendar');
     } finally {
       setCalendarLoading(false);
     }
   };
 
-  const connectMicrosoft = async () => {
+  const connect = async (provider: 'microsoft' | 'google') => {
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.user?.id) { setCalendarError('Sign in before connecting Microsoft Calendar.'); return; }
-    window.location.href = `/api/microsoft/connect?userId=${encodeURIComponent(session.user.id)}`;
+    if (!session?.user?.id) { setCalendarError('Sign in before connecting a calendar.'); return; }
+    window.location.href = `/api/${provider}/connect?userId=${encodeURIComponent(session.user.id)}`;
   };
 
   const prepare = async (event: any, thenJoin = false) => {
@@ -108,19 +120,32 @@ export function DashboardPage() {
 
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-medium text-text-primary">Microsoft Calendar</h2>
-          <button
-            onClick={calendarConnected ? loadCalendar : connectMicrosoft}
-            className="px-4 py-2 rounded-lg bg-bg-secondary border border-border text-text-primary hover:border-accent/40 transition-colors text-sm"
-          >
-            {calendarConnected ? 'Refresh' : 'Connect Microsoft'}
-          </button>
+          <h2 className="text-lg font-medium text-text-primary">Calendar</h2>
+          <div className="flex gap-2">
+            {calendarConnected && (
+              <button onClick={loadCalendar} className="px-4 py-2 rounded-lg bg-bg-secondary border border-border text-text-primary hover:border-accent/40 transition-colors text-sm">
+                Refresh
+              </button>
+            )}
+            <button
+              onClick={() => connect('google')}
+              className="px-4 py-2 rounded-lg bg-bg-secondary border border-border text-text-primary hover:border-accent/40 transition-colors text-sm"
+            >
+              {googleConnected ? 'Google ✓' : 'Connect Google'}
+            </button>
+            <button
+              onClick={() => connect('microsoft')}
+              className="px-4 py-2 rounded-lg bg-bg-secondary border border-border text-text-primary hover:border-accent/40 transition-colors text-sm"
+            >
+              {msConnected ? 'Microsoft ✓' : 'Connect Microsoft'}
+            </button>
+          </div>
         </div>
         <div className="p-6 rounded-xl bg-bg-secondary border border-border">
           {calendarLoading && <p className="text-sm text-text-muted">Loading calendar...</p>}
           {!calendarLoading && calendarError && <p className="text-sm text-danger">{calendarError}</p>}
           {!calendarLoading && !calendarConnected && !calendarError && (
-            <p className="text-sm text-text-muted">Connect Microsoft to pull Teams calendar meetings, attendees, agenda, and join links.</p>
+            <p className="text-sm text-text-muted">Connect Google or Microsoft to pull your meetings, attendees, agenda, and Teams join links.</p>
           )}
           {!calendarLoading && calendarConnected && events.length === 0 && (
             <p className="text-sm text-text-muted">No upcoming meetings found in the next 14 days.</p>

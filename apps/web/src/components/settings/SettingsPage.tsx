@@ -11,6 +11,7 @@ interface Me {
   name: string;
   role: 'admin' | 'member';
   microsoftConnected: boolean;
+  googleConnected: boolean;
 }
 interface Member { id: string; email: string; name: string; role: string }
 
@@ -22,6 +23,7 @@ export function SettingsPage() {
   const [invitePassword, setInvitePassword] = useState('');
   const params = useSearchParams();
   const msStatus = params.get('microsoft');
+  const googleStatus = params.get('google');
 
   const load = () =>
     apiJson<Me>('/api/me')
@@ -35,15 +37,15 @@ export function SettingsPage() {
 
   useEffect(() => { load(); }, []);
 
-  const connectMicrosoft = async () => {
+  const connectProvider = async (provider: 'microsoft' | 'google') => {
     const { data: { session } } = await createClient().auth.getSession();
     if (session?.user?.id) {
-      window.location.href = `/api/microsoft/connect?userId=${encodeURIComponent(session.user.id)}`;
+      window.location.href = `/api/${provider}/connect?userId=${encodeURIComponent(session.user.id)}`;
     }
   };
 
-  const disconnectMicrosoft = async () => {
-    await apiJson('/api/microsoft/disconnect', { method: 'POST' }).catch((e) => setError(e.message));
+  const disconnectProvider = async (provider: 'microsoft' | 'google') => {
+    await apiJson(`/api/${provider}/disconnect`, { method: 'POST' }).catch((e) => setError(e.message));
     load();
   };
 
@@ -80,6 +82,8 @@ export function SettingsPage() {
       {error && <p className="mb-4 text-sm text-danger">{error}</p>}
       {msStatus === 'connected' && <p className="mb-4 text-sm text-success">Microsoft account connected.</p>}
       {msStatus === 'error' && <p className="mb-4 text-sm text-danger">Microsoft connection failed. Try again.</p>}
+      {googleStatus === 'connected' && <p className="mb-4 text-sm text-success">Google account connected.</p>}
+      {googleStatus === 'error' && <p className="mb-4 text-sm text-danger">Google connection failed. Try again.</p>}
 
       {/* Profile */}
       <section className="mb-6 p-6 rounded-xl bg-bg-secondary border border-border">
@@ -90,21 +94,44 @@ export function SettingsPage() {
         </div>
       </section>
 
+      {/* Google connection — works with a normal Gmail account */}
+      <section className="mb-6 p-6 rounded-xl bg-bg-secondary border border-border">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-text-primary">Google Calendar</h2>
+            <p className="text-xs text-text-muted mt-1">
+              {me?.googleConnected
+                ? 'Connected — meetings sync from your Google Calendar (Teams join links auto-detected).'
+                : 'Not connected. Works with a normal Gmail account.'}
+            </p>
+          </div>
+          {me?.googleConnected ? (
+            <button onClick={() => disconnectProvider('google')} className="px-4 py-2 rounded-lg bg-bg-elevated border border-border text-text-primary text-sm hover:border-danger/40">
+              Disconnect
+            </button>
+          ) : (
+            <button onClick={() => connectProvider('google')} className="px-4 py-2 rounded-lg bg-accent text-white text-sm hover:bg-accent-hover">
+              Connect Google
+            </button>
+          )}
+        </div>
+      </section>
+
       {/* Microsoft connection */}
       <section className="mb-6 p-6 rounded-xl bg-bg-secondary border border-border">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-text-primary">Microsoft Calendar</h2>
             <p className="text-xs text-text-muted mt-1">
-              {me?.microsoftConnected ? 'Connected — meetings sync from your Teams calendar.' : 'Not connected.'}
+              {me?.microsoftConnected ? 'Connected — meetings sync from your Teams calendar.' : 'Not connected. Requires a Microsoft 365 organization account.'}
             </p>
           </div>
           {me?.microsoftConnected ? (
-            <button onClick={disconnectMicrosoft} className="px-4 py-2 rounded-lg bg-bg-elevated border border-border text-text-primary text-sm hover:border-danger/40">
+            <button onClick={() => disconnectProvider('microsoft')} className="px-4 py-2 rounded-lg bg-bg-elevated border border-border text-text-primary text-sm hover:border-danger/40">
               Disconnect
             </button>
           ) : (
-            <button onClick={connectMicrosoft} className="px-4 py-2 rounded-lg bg-accent text-white text-sm hover:bg-accent-hover">
+            <button onClick={() => connectProvider('microsoft')} className="px-4 py-2 rounded-lg bg-accent text-white text-sm hover:bg-accent-hover">
               Connect Microsoft
             </button>
           )}

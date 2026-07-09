@@ -11,7 +11,7 @@ export async function GET(req: Request) {
 
     const { data } = await supabase
       .from('users')
-      .select('ms_oauth_tokens')
+      .select('ms_oauth_tokens, google_oauth_tokens')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -21,6 +21,7 @@ export async function GET(req: Request) {
       name: profile.name,
       role: profile.role,
       microsoftConnected: Boolean(data?.ms_oauth_tokens),
+      googleConnected: Boolean(data?.google_oauth_tokens),
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 401 });
